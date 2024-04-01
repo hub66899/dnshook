@@ -51,14 +51,11 @@ func main() {
 		}
 		conf = *c.GetConfig()
 	}
-	if err := rule.Init(); err != nil {
+	if err := rule.Init(conf.ControlInterfaces...); err != nil {
 		log.Fatalf("Failed to init rule: %v\n", err)
 	}
 	if err := rule.AddNoVpnIp(conf.NoVpnIps...); err != nil {
 		log.Fatalf("Failed to add no vpn ips: %v\n", err)
-	}
-	if err := rule.AddControlEthernet(conf.ControlInterfaces...); err != nil {
-		log.Fatalf("Failed to add control ethernet: %v\n", err)
 	}
 	go func() {
 		if err := dnsserver.Start(conf.Dns); err != nil {

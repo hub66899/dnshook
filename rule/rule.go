@@ -1,14 +1,16 @@
 package rule
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/pkg/errors"
 	"log"
 	"os/exec"
 	"strings"
+	"text/template"
 )
 
-const initConf = `
+const tableTmp = `
 table ip shield_link {
 
     set no_vpn_domain_ip_set {
@@ -21,6 +23,9 @@ table ip shield_link {
 
     chain prerouting {
         type filter hook prerouting priority 0;
+{{range .}}        iifname {{.}} jump select_export
+{{end}}
+        jump wan
     }
 
     chain select_export {
@@ -52,9 +57,18 @@ type OutputInterfaces struct {
 	Wan []Interface
 }
 
-func Init() error {
+func Init(ethers ...string) error {
+	tmp, err := template.New("table").Parse(tableTmp)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	var buf bytes.Buffer
+	err = tmp.Execute(&buf, ethers)
+	if err != nil {
+		return errors.WithStack(err)
+	}
 	cmd := exec.Command("nft", "-f", "-")
-	cmd.Stdin = strings.NewReader(initConf)
+	cmd.Stdin = strings.NewReader(buf.String())
 	return runCmd(cmd)
 }
 
@@ -87,16 +101,6 @@ func AddNoVpnIp(ips ...string) error {
 	return runCmd(cmd)
 }
 
-func AddControlEthernet(ethers ...string) error {
-	for _, ether := range ethers {
-		cmd := exec.Command("nft", "add", "rule", "ip", "shield_link", "prerouting", "iifname", fmt.Sprintf("\"%s\"", ether), "jump", "select_export")
-		if err := runCmd(cmd); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 var clearIprouteCommands []*exec.Cmd
 
 func clearIpRoutes() error {
@@ -110,19 +114,58 @@ func clearIpRoutes() error {
 	return nil
 }
 
+const outputTmpStr = `
+table ip shield_link {
+    chain {{.Name}} {
+        meta mark set numgen inc mod 100 map { {{.Between}} }
+        ct state established,related meta mark set ct mark
+        accept
+    }
+}
+`
+
+type outputTmpValue struct {
+	Name    string
+	Between string
+}
+
+var outputTmp *template.Template
+
+const vpnEmptyRule = `
+table ip shield_link {
+    chain vpn {
+        reject
+    }
+}
+`
+
 func SetOutputInterfaces(value OutputInterfaces) error {
-	cmd := exec.Command("nft", "flush", "chain", "ip", "shield_link", "vpn")
-	if err := runCmd(cmd); err != nil {
-		return err
+	if outputTmp == nil {
+		tmp, err := template.New("output").Parse(outputTmpStr)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		outputTmp = tmp
 	}
-	cmd = exec.Command("nft", "flush", "chain", "ip", "shield_link", "wan")
-	if err := runCmd(cmd); err != nil {
-		return err
-	}
+
+	//cmd := exec.Command("nft", "flush", "chain", "ip", "shield_link", "vpn")
+	//if err := runCmd(cmd); err != nil {
+	//	return err
+	//}
+	//cmd = exec.Command("nft", "flush", "chain", "ip", "shield_link", "wan")
+	//if err := runCmd(cmd); err != nil {
+	//	return err
+	//}
 	n := 0
 	markInterfaceMap := map[string]string{}
 	set := func(interfaces []Interface, chain string) error {
 		if len(interfaces) == 0 {
+			//vpn 無可用接口
+			if chain == "vpn" {
+				cmd := exec.Command("nft", "-f", "-")
+				cmd.Stdin = strings.NewReader(vpnEmptyRule)
+				return runCmd(cmd)
+			}
 			return nil
 		}
 		total := 0
@@ -151,13 +194,24 @@ func SetOutputInterfaces(value OutputInterfaces) error {
 			current = end + 1
 			betweenArr[i] = fmt.Sprintf("%d-%d : %s", start, end, mark)
 		}
-		between := fmt.Sprintf("{ %s }", strings.Join(betweenArr, ", "))
-		cmd = exec.Command("nft", "add", "rule", "ip", "shield_link", chain, "meta", "mark", "set", "numgen", "inc", "mod", "100", "map", between)
-		if err := runCmd(cmd); err != nil {
-			return err
+		between := strings.Join(betweenArr, ",")
+		var buf bytes.Buffer
+		if err := outputTmp.Execute(&buf, outputTmpValue{Name: chain, Between: between}); err != nil {
+			return errors.WithStack(err)
 		}
-		cmd = exec.Command("nft", "add", "rule", "ip", "shield_link", chain, "ct", "state", "established,related", "meta", "mark", "set", "ct", "mark")
+		cmd := exec.Command("nft", "-f", "-")
+		cmd.Stdin = strings.NewReader(buf.String())
 		return runCmd(cmd)
+		//cmd = exec.Command("nft", "add", "rule", "ip", "shield_link", chain, "meta", "mark", "set", "numgen", "inc", "mod", "100", "map", between)
+		//if err := runCmd(cmd); err != nil {
+		//	return err
+		//}
+		//cmd = exec.Command("nft", "add", "rule", "ip", "shield_link", chain, "ct", "state", "established,related", "meta", "mark", "set", "ct", "mark")
+		//if err := runCmd(cmd); err != nil {
+		//	return err
+		//}
+		//cmd = exec.Command("nft", "add", "rule", "ip", "shield_link", chain, "accept")
+		//return runCmd(cmd)
 	}
 	if err := set(value.Wan, "wan"); err != nil {
 		return err
@@ -172,7 +226,7 @@ func SetOutputInterfaces(value OutputInterfaces) error {
 	for mark, in := range markInterfaceMap {
 		n++
 		table := fmt.Sprintf("%d", n+1000)
-		cmd = exec.Command("ip", "route", "add", "default", "dev", in, "table", table)
+		cmd := exec.Command("ip", "route", "add", "default", "dev", in, "table", table)
 		if err := runCmd(cmd); err != nil {
 			return err
 		}
