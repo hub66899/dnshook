@@ -3,8 +3,7 @@ package main
 import (
 	"dnshook/config"
 	"dnshook/dnsserver"
-	"dnshook/health"
-	"dnshook/rule"
+	"dnshook/network"
 	"log"
 	"os"
 	"os/signal"
@@ -13,10 +12,8 @@ import (
 )
 
 type Config struct {
-	Dns               dnsserver.Config `yaml:"dns"`
-	Health            health.Config    `yaml:"health"`
-	NoVpnIps          []string         `yaml:"no-vpn-ips"`
-	ControlInterfaces []string         `yaml:"control-interfaces"`
+	Dns     dnsserver.Config `yaml:"dns"`
+	Network network.Config   `yaml:"network"`
 }
 
 const (
@@ -30,15 +27,17 @@ var defaultConfig = Config{
 		Port:         5353,
 		DataFile:     path.Join(confDir, "dns.data"),
 	},
-	Health: health.Config{
-		PingAddr:           []string{"8.8.8.8", "cloudflare.com"},
-		PingTimeoutSeconds: 5,
-		Vpn: []health.Interface{
+	Network: network.Config{
+		Vpn: []network.Interface{
 			{Name: "vpn1", Weight: 1},
 		},
-		Wan: []health.Interface{
-			{Name: "wan1", Weight: 1},
+		Wan: []network.Interface{
+			{Name: "eth3", Weight: 1},
 		},
+		Lan:                []string{"eth0"},
+		IgnoreAddr:         []string{"192.168.0.0/16"},
+		PingAddr:           []string{"8.8.8.8", "cloudflare.com"},
+		PingTimeoutSeconds: 5,
 	},
 }
 
@@ -51,29 +50,22 @@ func main() {
 		}
 		conf = *c.GetConfig()
 	}
-	if err := rule.Init(conf.ControlInterfaces...); err != nil {
-		log.Fatalf("Failed to init rule: %v\n", err)
-	}
-	if err := rule.AddNoVpnIp(conf.NoVpnIps...); err != nil {
-		log.Fatalf("Failed to add no vpn ips: %v\n", err)
+	if err := network.Init(conf.Network); err != nil {
+		log.Fatalf("Failed to init rule: %+v\n", err)
 	}
 	go func() {
 		if err := dnsserver.Start(conf.Dns); err != nil {
-			log.Fatalf("Failed to start dns server: %v\n", err)
+			log.Fatalf("Failed to start dns server: %+v\n", err)
 		}
 	}()
-	if err := health.Start(conf.Health); err != nil {
-		log.Fatalf("Failed to start health service: %v\n", err)
-	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
-	if err := rule.ClearAll(); err != nil {
+	if err := network.ClearAll(); err != nil {
 		log.Printf("Failed to clear rules: %v\n", err)
 	}
 	if err := dnsserver.Stop(); err != nil {
 		log.Printf("Failed to stop dns server: %v", err)
 	}
-	health.Stop()
 	log.Printf("Service closed")
 }

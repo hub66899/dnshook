@@ -1,7 +1,7 @@
 package dnsserver
 
 import (
-	"dnshook/rule"
+	"dnshook/network"
 	"fmt"
 	"github.com/miekg/dns"
 	cache2 "github.com/patrickmn/go-cache"
@@ -35,7 +35,7 @@ func Start(conf Config) error {
 	}
 	cache = cache2.New(expiration, time.Hour)
 	cache.OnEvicted(func(s string, i interface{}) {
-		if err = rule.DelNoVpnDomainIp(s); err != nil {
+		if err = network.DelNoVpnDomainIp(s); err != nil {
 			log.Printf("%v\n", err)
 		}
 	})
@@ -48,7 +48,7 @@ func Start(conf Config) error {
 		ips = append(ips, ip)
 	}
 	if len(ips) > 0 {
-		if err = rule.AddNoVpnDomainIp(ips...); err != nil {
+		if err = network.AddNoVpnDomainIp(ips...); err != nil {
 			return err
 		}
 	}
@@ -110,5 +110,5 @@ func addIp(ip net.IP) error {
 		return nil
 	}
 	log.Printf("added ip %s\n", ipStr)
-	return rule.AddNoVpnDomainIp(ipStr)
+	return network.AddNoVpnDomainIp(ipStr)
 }
