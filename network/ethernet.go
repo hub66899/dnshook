@@ -13,8 +13,6 @@ import (
 
 type ethernet struct {
 	Interface
-	mark            string
-	table           string
 	status          status
 	onStatusChanged func() error
 	pingAddr        []string

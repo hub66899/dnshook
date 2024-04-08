@@ -15,20 +15,21 @@ import (
 
 type Config struct {
 	Upstreams    []string `yaml:"upstreams"`
-	NoVpnDomains []string
-	Port         int    `yaml:"port"`
-	DataFile     string `yaml:"data-file"`
+	NoVpnDomains []string `yaml:"no-vpn-domains"`
+	Port         int      `yaml:"port"`
 }
 
 var (
 	expiration = time.Hour * 24 * 2
 	cache      *cache2.Cache
 	server     *dns.Server
-	dataFile   string
+)
+
+const (
+	dataFile = "/etc/vpnmanager/data"
 )
 
 func Start(conf Config) error {
-	dataFile = conf.DataFile
 	reg, err := regexp.Compile(strings.Join(conf.NoVpnDomains, "|"))
 	if err != nil {
 		return errors.WithStack(err)

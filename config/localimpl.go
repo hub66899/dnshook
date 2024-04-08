@@ -17,13 +17,13 @@ func LocalYamlConfig[T any](fileName string, initialConfig ...T) (Manager[T], er
 		m.data = &d
 	}
 	exist, err := m.load()
+	if err != nil {
+		return nil, err
+	}
 	if !exist {
 		if err = m.write(*m.data); err != nil {
 			return nil, err
 		}
-	}
-	if err != nil {
-		return nil, err
 	}
 	return &m, nil
 }
@@ -50,6 +50,9 @@ func (m *localImpl[T]) load() (bool, error) {
 	// 读取 YAML 文件
 	yamlFile, err := os.ReadFile(m.fileName)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
 		return false, errors.WithStack(err)
 	}
 	// yaml转json

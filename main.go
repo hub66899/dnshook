@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path"
 	"syscall"
 )
 
@@ -17,7 +16,7 @@ type Config struct {
 }
 
 const (
-	confDir = "/etc/shieldlink"
+	confFileName = "/etc/vpnmanager/config.yml"
 )
 
 var defaultConfig = Config{
@@ -25,26 +24,22 @@ var defaultConfig = Config{
 		Upstreams:    []string{"8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"},
 		NoVpnDomains: []string{"google", "apple", "openai", "github", "cloudflare", "notion", "ubuntu", "docker", "golang"},
 		Port:         5353,
-		DataFile:     path.Join(confDir, "dns.data"),
 	},
 	Network: network.Config{
-		Vpn: []network.Interface{
-			{Name: "vpn1", Weight: 1},
+		VpnInterfaces: []network.Interface{
+			{Name: "vpn1", Weight: 1, Mark: "0x3e9"},
 		},
-		Wan: []network.Interface{
-			{Name: "eth3", Weight: 1},
-		},
-		Lan:                []string{"eth0"},
-		IgnoreAddr:         []string{"192.168.0.0/16"},
-		PingAddr:           []string{"8.8.8.8", "cloudflare.com"},
-		PingTimeoutSeconds: 5,
+		LanInterfaces:      []string{"eth0"},
+		NoVpnIps:           []string{"192.168.0.0/16"},
+		PingAddresses:      []string{"8.8.8.8", "cloudflare.com"},
+		PingTimeoutSeconds: 4,
 	},
 }
 
 func main() {
 	var conf Config
 	{
-		c, err := config.LocalYamlConfig[Config](path.Join(confDir, "config.yml"), defaultConfig)
+		c, err := config.LocalYamlConfig[Config](confFileName, defaultConfig)
 		if err != nil {
 			log.Fatalf("failed to init cache: %v", err)
 		}
