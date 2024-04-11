@@ -206,7 +206,7 @@ func setVpnChainRules() error {
 	if err := runCmd(cmd); err != nil {
 		return err
 	}
-	cmd = exec.Command("nft", "add", "rule", "ip", "vpn_manager", "vpn", "ct", "status", "new", "meta", "mark", "set", "numgen", "inc", "mod", "100", "map", between)
+	cmd = exec.Command("nft", "add", "rule", "ip", "vpn_manager", "vpn", "ct", "state", "new", "meta", "mark", "set", "numgen", "inc", "mod", "100", "map", between)
 	return runCmd(cmd)
 }
 
