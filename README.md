@@ -44,4 +44,3 @@ chmod +x /etc/init.d/vpnmanager
 /etc/init.d/vpnmanager enable
 /etc/init.d/vpnmanager start
 ```
-

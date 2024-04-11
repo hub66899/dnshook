@@ -22,7 +22,7 @@ const (
 var defaultConfig = Config{
 	Dns: dnsserver.Config{
 		Upstreams:    []string{"8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"},
-		NoVpnDomains: []string{"google", "apple", "openai", "github", "cloudflare", "notion", "ubuntu", "docker", "golang"},
+		NoVpnDomains: []string{"google", "youtube", "netflix", "facebook", "instagram", "apple", "openai", "github", "cloudflare", "notion", "ubuntu", "docker", "golang", "maven", "npmjs"},
 		Port:         5353,
 	},
 	Network: network.Config{

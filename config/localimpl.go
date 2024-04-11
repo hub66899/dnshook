@@ -12,17 +12,17 @@ func LocalYamlConfig[T any](fileName string, initialConfig ...T) (Manager[T], er
 	m := localImpl[T]{
 		fileName: fileName,
 	}
-	if len(initialConfig) > 0 {
-		d := initialConfig[0]
-		m.data = &d
-	}
 	exist, err := m.load()
 	if err != nil {
 		return nil, err
 	}
 	if !exist {
-		if err = m.write(*m.data); err != nil {
-			return nil, err
+		if len(initialConfig) > 0 {
+			d := initialConfig[0]
+			m.data = &d
+			if err = m.write(*m.data); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return &m, nil
@@ -55,7 +55,10 @@ func (m *localImpl[T]) load() (bool, error) {
 		}
 		return false, errors.WithStack(err)
 	}
-	// yaml转json
+	// yaml反序列化
+	if m.data == nil {
+		m.data = new(T)
+	}
 	err = yaml.Unmarshal(yamlFile, m.data)
 	return true, errors.WithStack(err)
 }

@@ -14,7 +14,7 @@ import (
 )
 
 const tableTmp = `
-table ip shield_link {
+table ip vpn_manager {
 
     set no_vpn_domain_ip_set {
         type ipv4_addr;
@@ -30,14 +30,15 @@ table ip shield_link {
     }
 
     chain select_export {
-        ip daddr @no_vpn_ip_set accept
-        ip daddr @no_vpn_domain_ip_set accept
+        ip daddr @no_vpn_ip_set return
+        ip daddr @no_vpn_domain_ip_set return
         jump vpn
     }
 
     chain vpn {
         reject
     }
+
 }
 `
 
@@ -97,7 +98,7 @@ func Init(conf Config) error {
 	}
 
 	if len(conf.NoVpnIps) > 0 {
-		cmd = exec.Command("nft", "add", "element", "ip", "shield_link", "no_vpn_ip_set", fmt.Sprintf("{ %s }", strings.Join(conf.NoVpnIps, ",")))
+		cmd = exec.Command("nft", "add", "element", "ip", "vpn_manager", "no_vpn_ip_set", fmt.Sprintf("{ %s }", strings.Join(conf.NoVpnIps, ",")))
 		if err = runCmd(cmd); err != nil {
 			return err
 		}
@@ -139,7 +140,7 @@ func AddNoVpnDomainIp(ips ...string) error {
 	if len(ips) == 0 {
 		return nil
 	}
-	cmd := exec.Command("nft", "add", "element", "ip", "shield_link", "no_vpn_domain_ip_set", fmt.Sprintf("{ %s }", strings.Join(ips, ",")))
+	cmd := exec.Command("nft", "add", "element", "ip", "vpn_manager", "no_vpn_domain_ip_set", fmt.Sprintf("{ %s }", strings.Join(ips, ",")))
 	return runCmd(cmd)
 }
 
@@ -147,19 +148,19 @@ func DelNoVpnDomainIp(ips ...string) error {
 	if len(ips) == 0 {
 		return nil
 	}
-	cmd := exec.Command("nft", "delete", "element", "ip", "shield_link", "no_vpn_domain_ip_set", fmt.Sprintf("{ %s }", strings.Join(ips, ",")))
+	cmd := exec.Command("nft", "delete", "element", "ip", "vpn_manager", "no_vpn_domain_ip_set", fmt.Sprintf("{ %s }", strings.Join(ips, ",")))
 	return runCmd(cmd)
 }
 
 func FlushNoVpnDomainIp() error {
-	cmd := exec.Command("nft", "flush", "set", "ip", "shield_link", "no_vpn_domain_ip_set")
+	cmd := exec.Command("nft", "flush", "set", "ip", "vpn_manager", "no_vpn_domain_ip_set")
 	return runCmd(cmd)
 }
 
 func setVpnChainRules() error {
 	//clear
 	{
-		cmd := exec.Command("nft", "flush", "chain", "ip", "shield_link", "vpn")
+		cmd := exec.Command("nft", "flush", "chain", "ip", "vpn_manager", "vpn")
 		if err := runCmd(cmd); err != nil {
 			return err
 		}
@@ -177,11 +178,11 @@ func setVpnChainRules() error {
 		}
 	}
 	if len(list) == 0 {
-		cmd := exec.Command("nft", "add", "rule", "ip", "shield_link", "vpn", "reject")
+		cmd := exec.Command("nft", "add", "rule", "ip", "vpn_manager", "vpn", "reject")
 		return runCmd(cmd)
 	}
 	if len(list) == 1 {
-		cmd := exec.Command("nft", "add", "rule", "ip", "shield_link", "vpn", "meta", "mark", "set", list[0].Mark)
+		cmd := exec.Command("nft", "add", "rule", "ip", "vpn_manager", "vpn", "meta", "mark", "set", list[0].Mark)
 		return runCmd(cmd)
 	}
 
@@ -201,11 +202,11 @@ func setVpnChainRules() error {
 		betweenArr[i] = fmt.Sprintf("%d-%d : %s", start, end, s.Mark)
 	}
 	between := fmt.Sprintf("{ %s }", strings.Join(betweenArr, ","))
-	cmd := exec.Command("nft", "add", "rule", "ip", "shield_link", "vpn", "ct", "state", "established,related", "meta", "mark", "set", "ct", "mark")
+	cmd := exec.Command("nft", "add", "rule", "ip", "vpn_manager", "vpn", "ct", "state", "established,related", "meta", "mark", "set", "ct", "mark")
 	if err := runCmd(cmd); err != nil {
 		return err
 	}
-	cmd = exec.Command("nft", "add", "rule", "ip", "shield_link", "vpn", "ct", "status", "new", "meta", "mark", "set", "numgen", "inc", "mod", "100", "map", between)
+	cmd = exec.Command("nft", "add", "rule", "ip", "vpn_manager", "vpn", "ct", "status", "new", "meta", "mark", "set", "numgen", "inc", "mod", "100", "map", between)
 	return runCmd(cmd)
 }
 
@@ -214,7 +215,7 @@ func ClearAll() error {
 	if err := clearRouteRules(); err != nil {
 		return err
 	}
-	cmd := exec.Command("nft", "delete", "table", "ip", "shield_link")
+	cmd := exec.Command("nft", "delete", "table", "ip", "vpn_manager")
 	return runCmd(cmd)
 }
 
