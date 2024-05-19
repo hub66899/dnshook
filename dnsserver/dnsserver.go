@@ -24,7 +24,7 @@ type Config struct {
 
 var defaultConfig = Config{
 	Upstreams:    []string{"8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"},
-	NoVpnDomains: []string{"cip.cc", "figma", "google", "youtube", "netflix", "facebook", "instagram", "apple", "openai", "github", "cloudflare", "notion", "ubuntu", "docker", "golang", "maven", "npmjs"},
+	NoVpnDomains: []string{"cip.cc", "chatgpt", "spotify", "netflix", "figma", "google", "youtube", "netflix", "facebook", "instagram", "apple", "openai", "github", "cloudflare", "notion", "ubuntu", "docker", "golang", "maven", "npmjs"},
 	Port:         5353,
 }
 
@@ -104,12 +104,27 @@ func Start() error {
 			if isNoVpnDomain(name) {
 				logrus.WithField("domain", name).Info("no vpn domain")
 				for _, ans := range msg.Answer {
-					logrus.Info(ans.String())
-					if a, ok := ans.(*dns.A); ok {
+					switch a := ans.(type) {
+					case *dns.A:
 						if err := addIp(a.A); err != nil {
 							logrus.WithError(err).WithField("ip", a.A.String()).Error("add ip failed")
 						}
+					case *dns.HTTPS:
+						for _, value := range a.Value {
+							if value.Key() == dns.SVCB_IPV4HINT {
+								ipv4Hints := strings.Split(value.String(), ",")
+								for _, hint := range ipv4Hints {
+									ip := net.ParseIP(hint)
+									if ip != nil {
+										if err := addIp(ip); err != nil {
+											logrus.WithError(err).WithField("ip", ip.String()).Error("add ip failed")
+										}
+									}
+								}
+							}
+						}
 					}
+					logrus.Info(ans.String())
 				}
 			}
 

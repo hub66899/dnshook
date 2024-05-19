@@ -95,6 +95,8 @@ func start() error {
 		cf := c.Get()
 		conf = &cf
 		if err := c.Watch(func(c Config) {
+			logrus.Info("config changed")
+			conf = &c
 			if err := clearAll(); err != nil {
 				logrus.WithError(err).Error("clear all failed")
 				return
