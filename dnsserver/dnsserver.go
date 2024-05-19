@@ -1,14 +1,17 @@
 package dnsserver
 
 import (
+	"context"
 	"dnshook/network"
+	"dnshook/pkg/config"
+	"dnshook/pkg/shutdown"
 	"fmt"
 	"github.com/miekg/dns"
-	cache2 "github.com/patrickmn/go-cache"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"log"
 	"net"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -19,83 +22,110 @@ type Config struct {
 	Port         int      `yaml:"port"`
 }
 
-var (
-	expiration = time.Hour * 24 * 2
-	cache      *cache2.Cache
-	server     *dns.Server
-)
+var defaultConfig = Config{
+	Upstreams:    []string{"8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"},
+	NoVpnDomains: []string{"cip.cc", "figma", "google", "youtube", "netflix", "facebook", "instagram", "apple", "openai", "github", "cloudflare", "notion", "ubuntu", "docker", "golang", "maven", "npmjs"},
+	Port:         5353,
+}
 
 const (
-	dataFile = "/etc/vpnmanager/data"
+	dataFile   = "/etc/vpnmanager/data"
+	configFile = "/etc/vpnmanager/dns.yml"
 )
 
-func Start(conf Config) error {
-	reg, err := regexp.Compile(strings.Join(conf.NoVpnDomains, "|"))
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	cache = cache2.New(expiration, time.Hour)
-	cache.OnEvicted(func(s string, i interface{}) {
-		if err = network.DelNoVpnDomainIp(s); err != nil {
-			log.Printf("%v\n", err)
+var (
+	expiration = time.Hour * 24 * 2
+	cacheData  *cache.Cache
+	server     *dns.Server
+	conf       *Config
+)
+
+func isNoVpnDomain(domain string) bool {
+	for _, d := range conf.NoVpnDomains {
+		if strings.Contains(domain, d) {
+			return true
 		}
-	})
-	if err = cache.LoadFile(dataFile); err != nil {
-		log.Printf("failed to load cache file : %v", err)
-		return nil
 	}
+	return false
+}
+
+func GetNoVpnIPs() []string {
 	var ips []string
-	for ip := range cache.Items() {
+	for ip := range cacheData.Items() {
 		ips = append(ips, ip)
 	}
-	if len(ips) > 0 {
-		if err = network.AddNoVpnDomainIp(ips...); err != nil {
-			return err
+	return ips
+}
+
+func Start() error {
+	if conf == nil {
+		c := config.LocalYamlConfig[Config](configFile, defaultConfig)
+		cf := c.Get()
+		conf = &cf
+		if err := c.Watch(func(c Config) {
+			logrus.Info("config changed")
+			conf = &c
+		}); err != nil {
+			logrus.WithError(err).Error("watch config failed")
 		}
 	}
-	dns.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
-		client := &dns.Client{}
-		var msg *dns.Msg
-		for _, upstream := range conf.Upstreams {
-			response, _, err := client.Exchange(r, upstream)
-			if err == nil {
-				msg = response
-				break
+	if cacheData == nil {
+		cacheData = cache.New(expiration, time.Hour)
+		cacheData.OnEvicted(func(s string, i interface{}) {
+			if err := network.DelNoVpnDomainIp(s); err != nil {
+				logrus.WithError(err).Error("del no vpn domain ip failed")
 			}
-			log.Printf("Failed to forward query to upstream %s: %v", upstream, err)
+		})
+		if err := cacheData.LoadFile(dataFile); err != nil {
+			logrus.WithError(err).Error("load cache file failed")
 		}
-		if msg == nil {
-			// 如果转发失败，返回服务器失败响应
-			m := new(dns.Msg)
-			m.SetRcode(r, dns.RcodeServerFailure)
-			_ = w.WriteMsg(m)
-			return
-		}
+	}
 
-		//是否在名单
-		if reg.MatchString(r.Question[0].Name) {
-			for _, ans := range msg.Answer {
-				if a, ok := ans.(*dns.A); ok {
-					if err := addIp(a.A); err != nil {
-						log.Printf("add ip %s failed:%v", a.A.String(), err)
+	if server == nil {
+		dns.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+			client := &dns.Client{}
+			var msg *dns.Msg
+			for _, upstream := range conf.Upstreams {
+				response, _, err := client.Exchange(r, upstream)
+				if err == nil {
+					msg = response
+					break
+				}
+				logrus.WithError(err).WithField("upstream", upstream).Error("Failed to forward query to upstream")
+			}
+			if msg == nil {
+				// 如果转发失败，返回服务器失败响应
+				m := new(dns.Msg)
+				m.SetRcode(r, dns.RcodeServerFailure)
+				_ = w.WriteMsg(m)
+				return
+			}
+			name := r.Question[0].Name
+			if isNoVpnDomain(name) {
+				logrus.WithField("domain", name).Info("no vpn domain")
+				for _, ans := range msg.Answer {
+					logrus.Info(ans.String())
+					if a, ok := ans.(*dns.A); ok {
+						if err := addIp(a.A); err != nil {
+							logrus.WithError(err).WithField("ip", a.A.String()).Error("add ip failed")
+						}
 					}
 				}
 			}
-		}
 
-		if err := w.WriteMsg(msg); err != nil {
-			log.Printf("Failed to write response: %v", err)
-		}
-	})
-	server = &dns.Server{Addr: fmt.Sprintf(":%d", conf.Port), Net: "udp"}
-	return errors.WithStack(server.ListenAndServe())
-}
-
-func Stop() error {
-	if err := cache.SaveFile(dataFile); err != nil {
-		log.Printf("save cache file error:%v", err)
+			if err := w.WriteMsg(msg); err != nil {
+				log.Printf("Failed to write response: %v", err)
+			}
+		})
+		server = &dns.Server{Addr: fmt.Sprintf(":%d", conf.Port), Net: "udp"}
+		shutdown.OnShutdown(func(ctx context.Context) error {
+			if err := cacheData.SaveFile(dataFile); err != nil {
+				logrus.WithError(err).Error("save cache file failed")
+			}
+			return server.Shutdown()
+		})
 	}
-	return errors.WithStack(server.Shutdown())
+	return errors.WithStack(server.ListenAndServe())
 }
 
 func addIp(ip net.IP) error {
@@ -103,13 +133,13 @@ func addIp(ip net.IP) error {
 		return fmt.Errorf("ip %s invalid", ip)
 	}
 	ipStr := ip.To4().String()
-	_, exist := cache.Get(ipStr)
+	_, exist := cacheData.Get(ipStr)
 	defer func() {
-		cache.Set(ipStr, "", expiration)
+		cacheData.Set(ipStr, "", expiration)
 	}()
 	if exist {
 		return nil
 	}
-	log.Printf("added ip %s\n", ipStr)
+	logrus.WithField("ip", ipStr).Info("added ip")
 	return network.AddNoVpnDomainIp(ipStr)
 }

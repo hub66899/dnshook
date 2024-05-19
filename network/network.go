@@ -3,8 +3,11 @@ package network
 import (
 	"bytes"
 	"context"
+	"dnshook/pkg/config"
+	"dnshook/pkg/shutdown"
 	"fmt"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"log"
 	"os/exec"
 	"strings"
@@ -56,12 +59,53 @@ type Config struct {
 	PingTimeoutSeconds int         `yaml:"ping-timeout-seconds"`
 }
 
+var defaultConfig = Config{
+	VpnInterfaces: []Interface{
+		{Name: "vpn", Weight: 1, Mark: "0x3e9"},
+	},
+	LanInterfaces:      []string{"br-lan"},
+	NoVpnIps:           []string{"192.168.0.0/16"},
+	PingAddresses:      []string{"8.8.8.8", "cloudflare.com"},
+	PingTimeoutSeconds: 4,
+}
+
 var (
-	vpnInterfaces = map[string]*ethernet{}
-	cancel        func()
+	vpnInterfaces     = map[string]*ethernet{}
+	cancel            func()
+	conf              *Config
+	getNoVpnDomainIps func() []string
 )
 
-func Init(conf Config) error {
+const configFileName = "/etc/vpnmanager/config.yml"
+
+func Start(g func() []string) error {
+	getNoVpnDomainIps = g
+	if err := start(); err != nil {
+		return err
+	}
+	shutdown.OnShutdown(func(ctx context.Context) error {
+		return clearAll()
+	})
+	return nil
+}
+
+func start() error {
+	if conf == nil {
+		c := config.LocalYamlConfig[Config](configFileName, defaultConfig)
+		cf := c.Get()
+		conf = &cf
+		if err := c.Watch(func(c Config) {
+			if err := clearAll(); err != nil {
+				logrus.WithError(err).Error("clear all failed")
+				return
+			}
+			if err := start(); err != nil {
+				logrus.WithError(err).Error("start failed")
+			}
+		}); err != nil {
+			return err
+		}
+	}
 	var v string
 	if len(conf.LanInterfaces) == 1 {
 		v = fmt.Sprintf("iifname %s jump select_export", conf.LanInterfaces[0])
@@ -119,6 +163,12 @@ func Init(conf Config) error {
 	wg.Wait()
 	if err = setVpnChainRules(); err != nil {
 		log.Printf("set vpn chain rule error : %+v", err)
+	}
+	ips := getNoVpnDomainIps()
+	if len(ips) > 0 {
+		if err = AddNoVpnDomainIp(ips...); err != nil {
+			logrus.WithError(err).Error("add no vpn domain ip failed")
+		}
 	}
 	return nil
 }
@@ -210,7 +260,7 @@ func setVpnChainRules() error {
 	return runCmd(cmd)
 }
 
-func ClearAll() error {
+func clearAll() error {
 	cancel()
 	if err := clearRouteRules(); err != nil {
 		return err
